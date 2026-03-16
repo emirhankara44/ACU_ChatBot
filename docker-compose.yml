@@ -1,0 +1,41 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: acubot_db
+      POSTGRES_USER: acu_user
+      POSTGRES_PASSWORD: acu_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  llm:
+    image: ollama/ollama
+    volumes:
+      - ollama_data:/root/.ollama
+    ports:
+      - "11434:11434"
+
+  web:
+    build: ./webapp
+    command: bash -c "python manage.py makemigrations && python manage.py migrate && python manage.py runserver 0.0.0.0:8000"
+    volumes:
+      - ./webapp:/app
+    ports:
+      - "8000:8000"
+    depends_on:
+      - db
+      - llm
+    environment:
+      - POSTGRES_DB=acubot_db
+      - POSTGRES_USER=acu_user
+      - POSTGRES_PASSWORD=acu_password
+      - POSTGRES_HOST=db
+      - LLM_URL=http://llm:11434
+
+volumes:
+  postgres_data:
+  ollama_data:
