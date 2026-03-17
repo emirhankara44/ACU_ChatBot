@@ -1,0 +1,104 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ACU AI Chatbot</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="{% static 'chat/app.css' %}" />
+  </head>
+  <body>
+    <div class="app">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand__mark">ACU</div>
+          <div class="brand__text">
+            <div class="brand__title">ACU AI Chatbot</div>
+            <div class="brand__subtitle">Local LLM • Django • PostgreSQL</div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <button class="sidebar__new" type="button" id="newChatBtn">
+            New chat
+          </button>
+          <div class="panel__title">Chat history</div>
+          <div class="history" id="sessionList">
+            {% if sessions %}
+              {% for s in sessions %}
+                <button
+                  class="history__item"
+                  type="button"
+                  data-session-id="{{ s.id }}"
+                >
+                  <div class="history__q">
+                    {{ s.title|default:"New chat"|truncatechars:80 }}
+                  </div>
+                  <div class="history__meta">
+                    {{ s.updated_at|date:"Y-m-d H:i" }}
+                  </div>
+                </button>
+              {% endfor %}
+            {% else %}
+              <div class="history__empty">No messages yet.</div>
+            {% endif %}
+          </div>
+        </div>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <div class="topbar__title">Chat</div>
+          <div class="topbar__badge">POST <span>/api/chat/</span></div>
+        </header>
+
+        <section class="chat" id="chat">
+          <div class="chat__inner" id="chatMessages">
+            <div class="msg msg--bot">
+              <div class="msg__bubble">
+                Hi! I can help answer questions about Acıbadem University. What would you like to know?
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <footer class="composer">
+          <form class="composer__form" id="chatForm">
+            <div class="composer__field">
+              <textarea
+                id="question"
+                name="question"
+                class="composer__input"
+                rows="1"
+                placeholder="Type your question…"
+                autocomplete="off"
+                required
+              ></textarea>
+              <button class="composer__send" type="submit" id="sendBtn">
+                Send
+              </button>
+            </div>
+            <div class="composer__hint" id="statusHint">
+              Running locally. If the LLM container is still starting, answers may take a moment.
+            </div>
+          </form>
+        </footer>
+      </main>
+    </div>
+
+    <script>
+      window.ACU_CHAT = {
+        apiUrl: "{% url 'chat-api' %}",
+        sessionsUrl: "{% url 'chat-sessions' %}",
+        sessionUrlTemplate: "{% url 'chat-session-messages' 0 %}".replace("/0/", "/{id}/"),
+      };
+    </script>
+    <script src="{% static 'chat/app.js' %}"></script>
+  </body>
+</html>

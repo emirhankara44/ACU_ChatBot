@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   db:
     image: postgres:15
@@ -18,6 +16,18 @@ services:
       - ollama_data:/root/.ollama
     ports:
       - "11434:11434"
+    command: ["serve"]
+
+  llm-pull:
+    image: ollama/ollama
+    volumes:
+      - ollama_data:/root/.ollama
+    environment:
+      - OLLAMA_HOST=http://llm:11434
+    entrypoint: ["ollama"]
+    command: ["pull", "llama3.2:1b"]
+    depends_on:
+      - llm
 
   web:
     build: ./webapp
@@ -27,8 +37,12 @@ services:
     ports:
       - "8000:8000"
     depends_on:
-      - db
-      - llm
+      db:
+        condition: service_started
+      llm:
+        condition: service_started
+      llm-pull:
+        condition: service_completed_successfully
     environment:
       - POSTGRES_DB=acubot_db
       - POSTGRES_USER=acu_user
