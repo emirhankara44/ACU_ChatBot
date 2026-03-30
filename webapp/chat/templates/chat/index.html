@@ -11,7 +11,7 @@
       href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="{% static 'chat/app.css' %}?v=20260330-7" />
+    <link rel="stylesheet" href="{% static 'chat/app.css' %}?v=20260330-8" />
   </head>
   <body>
     <div class="app">
@@ -74,8 +74,6 @@
                 Send
               </button>
             </div>
-            <div class="composer__hint" id="statusHint">
-            </div>
           </form>
         </footer>
       </main>
@@ -88,6 +86,6 @@
         sessionUrlTemplate: "{% url 'chat-session-messages' 0 %}".replace("/0/", "/{id}/"),
       };
     </script>
-    <script src="{% static 'chat/app.js' %}?v=20260330-7"></script>
+    <script src="{% static 'chat/app.js' %}?v=20260330-8"></script>
   </body>
 </html>

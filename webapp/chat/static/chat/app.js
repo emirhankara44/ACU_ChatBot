@@ -72,7 +72,7 @@
 
     const q = document.createElement("div");
     q.className = "history__q";
-      q.textContent = escapeText(s.title || "Untitled chat");
+    q.textContent = escapeText(s.title || "Untitled chat");
 
     const meta = document.createElement("div");
     meta.className = "history__meta";

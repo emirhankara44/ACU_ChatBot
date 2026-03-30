@@ -68,7 +68,6 @@ body{
   font-weight:800;
 }
 .brand__title{ font-weight:700; letter-spacing:-0.02em; }
-.brand__subtitle{ color:var(--muted2); font-size:12px; margin-top:2px; }
 
 .panel{
   margin-top:14px;
@@ -84,14 +83,6 @@ body{
   text-transform: uppercase;
   letter-spacing: .12em;
   margin-bottom:10px;
-}
-
-.tips{
-  margin:0;
-  padding-left:18px;
-  color: var(--muted);
-  line-height:1.55;
-  font-size:13px;
 }
 
 .history{
@@ -199,15 +190,6 @@ body{
   font-weight:700;
   letter-spacing:-0.02em;
 }
-.topbar__badge{
-  font-size:12px;
-  color: var(--muted);
-  padding:8px 10px;
-  border-radius:999px;
-  border:1px solid rgba(255,255,255,.10);
-  background: rgba(255,255,255,.05);
-}
-.topbar__badge span{ color: var(--text); font-weight:600; }
 
 .chat{
   overflow:auto;
@@ -321,13 +303,6 @@ body{
   opacity:.6;
   cursor:not-allowed;
 }
-.composer__hint{
-  margin-top:10px;
-  color: var(--muted2);
-  font-size:12px;
-  display:none;
-}
-
 .confirm-overlay{
   position: fixed;
   inset: 0;
