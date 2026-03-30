@@ -11,7 +11,7 @@
       href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="{% static 'chat/app.css' %}" />
+    <link rel="stylesheet" href="{% static 'chat/app.css' %}?v=20260330-7" />
   </head>
   <body>
     <div class="app">
@@ -20,7 +20,6 @@
           <div class="brand__mark">ACU</div>
           <div class="brand__text">
             <div class="brand__title">ACU AI Chatbot</div>
-            <div class="brand__subtitle">Local LLM • Django • PostgreSQL</div>
           </div>
         </div>
 
@@ -32,18 +31,17 @@
           <div class="history" id="sessionList">
             {% if sessions %}
               {% for s in sessions %}
-                <button
-                  class="history__item"
-                  type="button"
-                  data-session-id="{{ s.id }}"
-                >
-                  <div class="history__q">
-                    {{ s.title|default:"New chat"|truncatechars:80 }}
-                  </div>
-                  <div class="history__meta">
-                    {{ s.updated_at|date:"Y-m-d H:i" }}
-                  </div>
-                </button>
+                <div class="history__item" data-session-id="{{ s.id }}">
+                  <button class="history__open" type="button" data-session-id="{{ s.id }}">
+                    <div class="history__q">
+                      {{ s.title|default:"Untitled chat"|truncatechars:80 }}
+                    </div>
+                    <div class="history__meta">
+                      {{ s.updated_at|date:"Y-m-d H:i" }}
+                    </div>
+                  </button>
+                  <button class="history__delete" type="button" data-session-id="{{ s.id }}" aria-label="Delete chat" title="Delete chat">🗑</button>
+                </div>
               {% endfor %}
             {% else %}
               <div class="history__empty">No messages yet.</div>
@@ -55,17 +53,10 @@
       <main class="main">
         <header class="topbar">
           <div class="topbar__title">Chat</div>
-          <div class="topbar__badge">POST <span>/api/chat/</span></div>
         </header>
 
         <section class="chat" id="chat">
-          <div class="chat__inner" id="chatMessages">
-            <div class="msg msg--bot">
-              <div class="msg__bubble">
-                Hi! I can help answer questions about Acıbadem University. What would you like to know?
-              </div>
-            </div>
-          </div>
+          <div class="chat__inner" id="chatMessages"></div>
         </section>
 
         <footer class="composer">
@@ -76,7 +67,6 @@
                 name="question"
                 class="composer__input"
                 rows="1"
-                placeholder="Type your question…"
                 autocomplete="off"
                 required
               ></textarea>
@@ -85,7 +75,6 @@
               </button>
             </div>
             <div class="composer__hint" id="statusHint">
-              Running locally. If the LLM container is still starting, answers may take a moment.
             </div>
           </form>
         </footer>
@@ -99,6 +88,6 @@
         sessionUrlTemplate: "{% url 'chat-session-messages' 0 %}".replace("/0/", "/{id}/"),
       };
     </script>
-    <script src="{% static 'chat/app.js' %}"></script>
+    <script src="{% static 'chat/app.js' %}?v=20260330-7"></script>
   </body>
 </html>

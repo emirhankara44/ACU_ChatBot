@@ -1,39 +1,83 @@
 import json
 import os
 import requests
+from django.db.models import Count
 from django.http import JsonResponse
 from django.shortcuts import render
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 from .models import ChatMessage, ChatSession
 
+def build_session_title(question: str) -> str:
+    text = " ".join((question or "").split()).strip()
+    if not text:
+        return "Untitled chat"
+    if len(text) > 70:
+        text = text[:70].rstrip() + "..."
+    return f"About: {text}"
+
 def index(request):
-    sessions = ChatSession.objects.all()[:30]
+    sessions = (
+        ChatSession.objects.annotate(message_count=Count("messages"))
+        .filter(message_count__gt=0)[:30]
+    )
     return render(request, "chat/index.html", {"sessions": sessions})
 
 @csrf_exempt
 @require_http_methods(["GET", "POST"])
 def sessions(request):
     if request.method == "POST":
-        s = ChatSession.objects.create(title="New chat")
-        return JsonResponse({"session": {"id": s.id, "title": s.title, "updated_at": s.updated_at.isoformat()}}, status=201)
+        empty_session = (
+            ChatSession.objects.annotate(message_count=Count("messages"))
+            .filter(message_count=0)
+            .first()
+        )
+        if empty_session is not None:
+            return JsonResponse(
+                {
+                    "created": False,
+                    "session": {
+                        "id": empty_session.id,
+                        "title": empty_session.title,
+                        "updated_at": empty_session.updated_at.isoformat(),
+                    },
+                },
+                status=200,
+            )
 
-    items = ChatSession.objects.all()[:30]
+        s = ChatSession.objects.create(title="")
+        return JsonResponse(
+            {
+                "created": True,
+                "session": {"id": s.id, "title": s.title, "updated_at": s.updated_at.isoformat()},
+            },
+            status=201,
+        )
+
+    items = (
+        ChatSession.objects.annotate(message_count=Count("messages"))
+        .filter(message_count__gt=0)[:30]
+    )
     return JsonResponse(
         {
             "sessions": [
-                {"id": s.id, "title": s.title or "New chat", "updated_at": s.updated_at.isoformat()}
+                {"id": s.id, "title": s.title or "Untitled chat", "updated_at": s.updated_at.isoformat()}
                 for s in items
             ]
         }
     )
 
-@require_http_methods(["GET"])
+@csrf_exempt
+@require_http_methods(["GET", "DELETE"])
 def session_messages(request, session_id: int):
     try:
         session = ChatSession.objects.get(pk=session_id)
     except ChatSession.DoesNotExist:
         return JsonResponse({"error": "Session not found"}, status=404)
+
+    if request.method == "DELETE":
+        session.delete()
+        return JsonResponse({"ok": True})
 
     msgs = session.messages.all()
     return JsonResponse(
@@ -79,7 +123,7 @@ def chat(request):
             except ChatSession.DoesNotExist:
                 session = None
         if session is None:
-            session = ChatSession.objects.create(title="New chat")
+            session = ChatSession.objects.create(title="")
         
         payload = {
             "model": "llama3.2:1b",
@@ -102,7 +146,7 @@ def chat(request):
             response.raise_for_status()
             answer = response.json().get("message", {}).get("content", "")
             if not session.title:
-                session.title = (question.strip()[:60] + ("…" if len(question.strip()) > 60 else ""))
+                session.title = build_session_title(question)
                 session.save(update_fields=["title"])
             ChatMessage.objects.create(session=session, question=question, answer=answer)
             return JsonResponse({

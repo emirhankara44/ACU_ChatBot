@@ -8,9 +8,10 @@
   const textarea = document.getElementById("question");
   const sendBtn = document.getElementById("sendBtn");
   const messagesEl = document.getElementById("chatMessages");
-  const statusHint = document.getElementById("statusHint");
   const newChatBtn = document.getElementById("newChatBtn");
   const sessionListEl = document.getElementById("sessionList");
+  const INTRO_TEXT =
+    "Hi! I can help answer questions about Acibadem University. What would you like to know?";
 
   let currentSessionId = null;
 
@@ -28,6 +29,13 @@
     )}:${pad(d.getMinutes())}`;
   }
 
+  function buildSessionTitleFromQuestion(question) {
+    const text = (question || "").toString().replace(/\s+/g, " ").trim();
+    if (!text) return "Untitled chat";
+    const shortText = text.length > 70 ? `${text.slice(0, 70).trimEnd()}...` : text;
+    return `About: ${shortText}`;
+  }
+
   function renderSessions(items) {
     if (!sessionListEl) return;
     sessionListEl.innerHTML = "";
@@ -40,25 +48,79 @@
     }
 
     items.forEach((s) => {
-      const btn = document.createElement("button");
-      btn.className = "history__item";
-      btn.type = "button";
-      btn.setAttribute("data-session-id", s.id);
-
-      const q = document.createElement("div");
-      q.className = "history__q";
-      q.textContent = escapeText(s.title || "New chat");
-
-      const meta = document.createElement("div");
-      meta.className = "history__meta";
-      meta.textContent = formatWhen(s.updated_at);
-
-      btn.appendChild(q);
-      btn.appendChild(meta);
-      btn.addEventListener("click", () => loadSession(String(s.id)));
-
-      sessionListEl.appendChild(btn);
+      sessionListEl.appendChild(buildSessionItem(s));
     });
+  }
+
+  function buildSessionItem(s) {
+    const item = document.createElement("div");
+    item.className = "history__item";
+    item.setAttribute("data-session-id", s.id);
+
+    const openBtn = document.createElement("button");
+    openBtn.className = "history__open";
+    openBtn.type = "button";
+    openBtn.setAttribute("data-session-id", s.id);
+
+    const deleteBtn = document.createElement("button");
+    deleteBtn.className = "history__delete";
+    deleteBtn.type = "button";
+    deleteBtn.setAttribute("data-session-id", s.id);
+    deleteBtn.setAttribute("aria-label", "Delete chat");
+    deleteBtn.title = "Delete chat";
+    deleteBtn.textContent = "🗑";
+
+    const q = document.createElement("div");
+    q.className = "history__q";
+      q.textContent = escapeText(s.title || "Untitled chat");
+
+    const meta = document.createElement("div");
+    meta.className = "history__meta";
+    meta.textContent = formatWhen(s.updated_at);
+
+    openBtn.appendChild(q);
+    openBtn.appendChild(meta);
+    openBtn.addEventListener("click", () => loadSession(String(s.id)));
+    deleteBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      deleteSession(String(s.id));
+    });
+
+    item.appendChild(openBtn);
+    item.appendChild(deleteBtn);
+    return item;
+  }
+
+  function upsertSessionToTop(session) {
+    if (!sessionListEl || !session || !session.id) return;
+    const existing = sessionListEl.querySelector(`[data-session-id="${session.id}"]`);
+    if (existing) existing.remove();
+    const emptyEl = sessionListEl.querySelector(".history__empty");
+    if (emptyEl) emptyEl.remove();
+    sessionListEl.prepend(buildSessionItem(session));
+  }
+
+  async function deleteSession(sessionId) {
+    if (!sessionId) return;
+    const ok = await openDeleteConfirmModal();
+    if (!ok) return;
+
+    try {
+      const url = sessionUrlTemplate.replace("{id}", String(sessionId));
+      const resp = await fetch(url, { method: "DELETE" });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(data.error || `Request failed (${resp.status})`);
+
+      if (currentSessionId === String(sessionId)) {
+        resetChatUi();
+      }
+      await refreshSessions();
+    } catch (e) {
+      addMessage(
+        "error",
+        "Could not delete this chat.\n\n" + (e && e.message ? `Details: ${e.message}` : "")
+      );
+    }
   }
 
   async function refreshSessions() {
@@ -92,20 +154,87 @@
     return bubble;
   }
 
+  function addTypingIndicator() {
+    const wrap = document.createElement("div");
+    wrap.className = "msg msg--bot";
+
+    const bubble = document.createElement("div");
+    bubble.className = "msg__bubble msg__bubble--typing";
+    bubble.setAttribute("aria-label", "Assistant is typing");
+
+    for (let i = 0; i < 3; i += 1) {
+      const dot = document.createElement("span");
+      dot.className = "typing-dot";
+      bubble.appendChild(dot);
+    }
+
+    wrap.appendChild(bubble);
+    messagesEl.appendChild(wrap);
+    scrollToBottom();
+    return bubble;
+  }
+
+  function ensureDeleteModal() {
+    let overlay = document.getElementById("deleteConfirmOverlay");
+    if (overlay) return overlay;
+
+    overlay = document.createElement("div");
+    overlay.id = "deleteConfirmOverlay";
+    overlay.className = "confirm-overlay";
+    overlay.innerHTML = `
+      <div class="confirm-modal" role="dialog" aria-modal="true" aria-labelledby="confirmTitle">
+        <h3 id="confirmTitle" class="confirm-title">Are you sure you want to delete this chat?</h3>
+        <p class="confirm-subtitle">This action cannot be undone.</p>
+        <div class="confirm-actions">
+          <button type="button" class="confirm-btn confirm-btn--ghost" id="confirmCancelBtn">Cancel</button>
+          <button type="button" class="confirm-btn confirm-btn--danger" id="confirmDeleteBtn">Delete</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    return overlay;
+  }
+
+  function openDeleteConfirmModal() {
+    const overlay = ensureDeleteModal();
+    overlay.classList.add("is-open");
+    return new Promise((resolve) => {
+      const cancelBtn = document.getElementById("confirmCancelBtn");
+      const deleteBtn = document.getElementById("confirmDeleteBtn");
+
+      const cleanup = (result) => {
+        overlay.classList.remove("is-open");
+        cancelBtn.removeEventListener("click", onCancel);
+        deleteBtn.removeEventListener("click", onDelete);
+        overlay.removeEventListener("click", onBackdrop);
+        document.removeEventListener("keydown", onKeydown);
+        resolve(result);
+      };
+      const onCancel = () => cleanup(false);
+      const onDelete = () => cleanup(true);
+      const onBackdrop = (e) => {
+        if (e.target === overlay) cleanup(false);
+      };
+      const onKeydown = (e) => {
+        if (e.key === "Escape") cleanup(false);
+      };
+
+      cancelBtn.addEventListener("click", onCancel);
+      deleteBtn.addEventListener("click", onDelete);
+      overlay.addEventListener("click", onBackdrop);
+      document.addEventListener("keydown", onKeydown);
+      deleteBtn.focus();
+    });
+  }
+
   function setBusy(busy) {
     sendBtn.disabled = busy;
     textarea.disabled = busy;
-    if (busy) {
-      statusHint.textContent = "Thinking…";
-    } else {
-      statusHint.textContent =
-        "Running locally. If the LLM container is still starting, answers may take a moment.";
-    }
   }
 
   async function sendQuestion(question) {
     addMessage("user", question);
-    const placeholder = addMessage("bot", "…");
+    const placeholder = addTypingIndicator();
     setBusy(true);
 
     try {
@@ -123,9 +252,16 @@
       if (data.session_id) {
         currentSessionId = data.session_id;
       }
+      placeholder.classList.remove("msg__bubble--typing");
       placeholder.textContent = data.response || "(No response)";
-      await refreshSessions();
+      upsertSessionToTop({
+        id: currentSessionId,
+        title: buildSessionTitleFromQuestion(question),
+        updated_at: new Date().toISOString(),
+      });
+      refreshSessions();
     } catch (err) {
+      placeholder.classList.remove("msg__bubble--typing");
       placeholder.parentElement.classList.remove("msg--bot");
       placeholder.parentElement.classList.add("msg--error");
       placeholder.textContent =
@@ -161,10 +297,7 @@
   function resetChatUi() {
     messagesEl.innerHTML = "";
     currentSessionId = null;
-    addMessage(
-      "bot",
-      "Hi! I can help answer questions about Acıbadem University. What would you like to know?"
-    );
+    addMessage("bot", INTRO_TEXT);
     textarea.value = "";
     autosize();
     textarea.focus();
@@ -178,7 +311,6 @@
       if (!resp.ok) throw new Error(data.error || `Request failed (${resp.status})`);
       currentSessionId = data.session && data.session.id ? String(data.session.id) : null;
       resetChatUi();
-      await refreshSessions();
     } catch (e) {
       resetChatUi();
       addMessage(
@@ -212,9 +344,6 @@
         if (m.error) addMessage("error", m.error);
       });
 
-      if ((data.messages || []).length === 0) {
-        addMessage("bot", "This chat is empty.");
-      }
     } catch (e) {
       messagesEl.innerHTML = "";
       addMessage(
@@ -227,11 +356,17 @@
   }
 
   // keep server-rendered listeners working if JS refresh is disabled
-  document.querySelectorAll(".history__item").forEach((btn) => {
+  document.querySelectorAll(".history__open").forEach((btn) => {
     btn.addEventListener("click", () => loadSession(btn.getAttribute("data-session-id")));
+  });
+  document.querySelectorAll(".history__delete").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      deleteSession(btn.getAttribute("data-session-id"));
+    });
   });
 
   autosize();
-  scrollToBottom();
+  resetChatUi();
   refreshSessions();
 })();
