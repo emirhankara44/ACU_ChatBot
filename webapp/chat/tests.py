@@ -7,6 +7,11 @@ from django.urls import reverse
 from .models import ChatMessage, ChatSession
 from .views import build_session_title, detect_question_language
 
+# Type hints for ChatSession
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from django.db.models import Model
+
 
 class ChatViewTests(TestCase):
     def test_detect_question_language_handles_turkish_characters(self):
@@ -18,14 +23,14 @@ class ChatViewTests(TestCase):
         self.assertEqual(build_session_title("Hello world", "en"), "About: Hello world")
 
     def test_sessions_post_reuses_existing_empty_session(self):
-        session = ChatSession.objects.create(title="")
+        session: ChatSession = ChatSession.objects.create(title="")
 
         response = self.client.post(reverse("chat-sessions"))
 
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         self.assertFalse(payload["created"])
-        self.assertEqual(payload["session"]["id"], session.id)
+        self.assertEqual(payload["session"]["id"], session.pk)
 
     @patch("chat.views.requests.post")
     def test_chat_post_creates_message_and_returns_session_title(self, mock_post):
