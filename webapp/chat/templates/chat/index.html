@@ -83,9 +83,10 @@
       window.ACU_CHAT = {
         apiUrl: "{% url 'chat-api' %}",
         sessionsUrl: "{% url 'chat-sessions' %}",
-        sessionUrlTemplate: "{% url 'chat-session-messages' 0 %}".replace("/0/", "/{id}/"),
+        // Route is "/api/sessions/<id>/". We replace the placeholder `0` with `{id}`.
+        sessionUrlTemplate: "{% url 'chat-session-messages' 0 %}".replace(/\/0\/$/, "/{id}/")
       };
     </script>
-    <script src="{% static 'chat/app.js' %}?v=20260330-8"></script>
+    <script defer src="{% static 'chat/app.js' %}?v=20260330-8"></script>
   </body>
 </html>

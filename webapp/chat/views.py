@@ -1,77 +1,131 @@
 import json
 import os
+from typing import Any
+
 import requests
 from django.db.models import Count
-from django.http import JsonResponse
+from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import render
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
+
 from .models import ChatMessage, ChatSession
 
-def build_session_title(question: str) -> str:
-    text = " ".join((question or "").split()).strip()
+DEFAULT_MODEL = os.environ.get("LLM_MODEL", "llama3.2:1b")
+DEFAULT_LLM_URL = "http://localhost:11434"
+SYSTEM_PROMPT = (
+    "You are ACU AI Chatbot for Acibadem University. Answer clearly and helpfully. "
+    "If a question is not specifically about Acibadem University, still respond usefully, "
+    "but do not invent university-specific facts. If you are unsure, say so."
+)
+
+
+def detect_question_language(question: str) -> str:
+    text = " ".join(question.split()).strip()
     if not text:
-        return "Untitled chat"
+        return "en"
+
+    if any(character in "çğıöşüÇĞİÖŞÜ" for character in text):
+        return "tr"
+    return "en"
+
+
+def build_session_title(question: str, lang: str) -> str:
+    text = " ".join(question.split()).strip()
+    if not text:
+        return "Untitled chat" if lang == "en" else "Başlıksız sohbet"
     if len(text) > 70:
         text = text[:70].rstrip() + "..."
-    return f"About: {text}"
+    return f"About: {text}" if lang == "en" else f"Hakkında: {text}"
 
-def index(request):
-    sessions = (
+
+def get_llm_url() -> str:
+    return os.environ.get("LLM_URL") or os.environ.get("OLLAMA_URL") or DEFAULT_LLM_URL
+
+
+def parse_request_data(request: HttpRequest) -> dict[str, Any]:
+    try:
+        body = request.body.decode("utf-8") if isinstance(request.body, bytes) else request.body
+        payload = json.loads(body or "{}")
+    except (UnicodeDecodeError, TypeError, json.JSONDecodeError):
+        payload = {}
+
+    if isinstance(payload, dict):
+        return payload
+    return {}
+
+
+def get_or_create_session(session_id: Any) -> Any:
+    if session_id:
+        try:
+            return ChatSession.objects.get(pk=session_id)
+        except ChatSession.DoesNotExist:
+            pass
+    return ChatSession.objects.create(title="")
+
+
+def extract_answer(response: Any) -> str:
+    payload = response.json()
+    message = payload.get("message", {})
+    if isinstance(message, dict):
+        content = message.get("content", "")
+        return content if isinstance(content, str) else str(content)
+    return ""
+
+
+def serialize_session(session: Any) -> dict[str, Any]:
+    return {
+        "id": session.id,
+        "title": session.title or "Untitled chat",
+        "updated_at": session.updated_at.isoformat(),
+    }
+
+
+def serialize_message(message: Any) -> dict[str, Any]:
+    return {
+        "id": message.id,
+        "created_at": message.created_at.isoformat(),
+        "question": message.question,
+        "answer": message.answer,
+        "error": message.error,
+    }
+
+
+def index(request: HttpRequest) -> HttpResponse:
+    session_items: Any = (
         ChatSession.objects.annotate(message_count=Count("messages"))
         .filter(message_count__gt=0)[:30]
     )
-    return render(request, "chat/index.html", {"sessions": sessions})
+    return render(request, "chat/index.html", {"sessions": session_items})
+
 
 @csrf_exempt
 @require_http_methods(["GET", "POST"])
-def sessions(request):
+def sessions(request: HttpRequest) -> JsonResponse:
     if request.method == "POST":
-        empty_session = (
+        empty_session: Any = (
             ChatSession.objects.annotate(message_count=Count("messages"))
             .filter(message_count=0)
             .first()
         )
         if empty_session is not None:
-            return JsonResponse(
-                {
-                    "created": False,
-                    "session": {
-                        "id": empty_session.id,
-                        "title": empty_session.title,
-                        "updated_at": empty_session.updated_at.isoformat(),
-                    },
-                },
-                status=200,
-            )
+            return JsonResponse({"created": False, "session": serialize_session(empty_session)})
 
-        s = ChatSession.objects.create(title="")
-        return JsonResponse(
-            {
-                "created": True,
-                "session": {"id": s.id, "title": s.title, "updated_at": s.updated_at.isoformat()},
-            },
-            status=201,
-        )
+        session = ChatSession.objects.create(title="")
+        return JsonResponse({"created": True, "session": serialize_session(session)}, status=201)
 
-    items = (
+    session_items: Any = (
         ChatSession.objects.annotate(message_count=Count("messages"))
         .filter(message_count__gt=0)[:30]
     )
-    return JsonResponse(
-        {
-            "sessions": [
-                {"id": s.id, "title": s.title or "Untitled chat", "updated_at": s.updated_at.isoformat()}
-                for s in items
-            ]
-        }
-    )
+    return JsonResponse({"sessions": [serialize_session(session) for session in session_items]})
+
 
 @csrf_exempt
 @require_http_methods(["GET", "DELETE"])
-def session_messages(request, session_id: int):
+def session_messages(request: HttpRequest, session_id: int) -> JsonResponse:
     try:
-        session = ChatSession.objects.get(pk=session_id)
+        session: Any = ChatSession.objects.get(pk=session_id)
     except ChatSession.DoesNotExist:
         return JsonResponse({"error": "Session not found"}, status=404)
 
@@ -79,83 +133,63 @@ def session_messages(request, session_id: int):
         session.delete()
         return JsonResponse({"ok": True})
 
-    msgs = session.messages.all()
     return JsonResponse(
         {
-            "session": {"id": session.id, "title": session.title, "updated_at": session.updated_at.isoformat()},
-            "messages": [
-                {
-                    "id": m.id,
-                    "created_at": m.created_at.isoformat(),
-                    "question": m.question,
-                    "answer": m.answer,
-                    "error": m.error,
-                }
-                for m in msgs
-            ],
+            "session": serialize_session(session),
+            "messages": [serialize_message(message) for message in session.messages.all()],
         }
     )
 
+
 @csrf_exempt
-def chat(request):
-    if request.method == "POST":
-        question = None
-        session_id = None
-        try:
-            # Try parsing JSON body first
-            data = json.loads(request.body)
-            question = data.get("question")
-            session_id = data.get("session_id")
-        except json.JSONDecodeError:
-            # Fallback to form data (request.POST) if JSON fails
-            question = request.POST.get("question")
-            session_id = request.POST.get("session_id")
-        
-        if not question:
-            return JsonResponse({"error": "Missing 'question' parameter"}, status=400)
+@require_http_methods(["GET", "POST"])
+def chat(request: HttpRequest) -> JsonResponse:
+    if request.method == "GET":
+        return JsonResponse({"message": 'Chat API is ready. Send a POST request with {"question": "..."}.'})
 
-        llm_url = os.environ.get("LLM_URL") or os.environ.get("OLLAMA_URL") or "http://localhost:11434"
+    data = parse_request_data(request)
+    question_value = data.get("question") or request.POST.get("question") or ""
+    question = str(question_value).strip()
+    session_id = data.get("session_id") or request.POST.get("session_id")
 
-        session = None
-        if session_id:
-            try:
-                session = ChatSession.objects.get(pk=session_id)
-            except ChatSession.DoesNotExist:
-                session = None
-        if session is None:
-            session = ChatSession.objects.create(title="")
-        
-        payload = {
-            "model": "llama3.2:1b",
-            "messages": [
-                {
-                    "role": "system",
-                    "content": (
-                        "You are ACU AI Chatbot, an assistant for Acıbadem University (ACU). "
-                        "Answer in English. Be concise and helpful. "
-                        "If you are not sure, say what you do and do not know."
-                    ),
-                },
-                {"role": "user", "content": question}
-            ],
-            "stream": False
-        }
-        
-        try:
-            response = requests.post(f"{llm_url}/api/chat", json=payload, timeout=60)
-            response.raise_for_status()
-            answer = response.json().get("message", {}).get("content", "")
-            if not session.title:
-                session.title = build_session_title(question)
-                session.save(update_fields=["title"])
-            ChatMessage.objects.create(session=session, question=question, answer=answer)
-            return JsonResponse({
+    if not question:
+        return JsonResponse({"error": "Missing 'question' parameter"}, status=400)
+
+    session: Any = get_or_create_session(session_id)
+    language = detect_question_language(question)
+    payload = {
+        "model": DEFAULT_MODEL,
+        "messages": [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": question},
+        ],
+        "stream": False,
+        "options": {
+            "temperature": 0.1,
+            "top_p": 0.9,
+            "repeat_penalty": 1.1,
+            "num_predict": 260,
+        },
+    }
+
+    try:
+        response = requests.post(f"{get_llm_url()}/api/chat", json=payload, timeout=60)
+        response.raise_for_status()
+        answer = extract_answer(response)
+
+        if not session.title:
+            session.title = build_session_title(question, lang=language)
+            session.save(update_fields=["title"])
+
+        ChatMessage.objects.create(session=session, question=question, answer=answer)
+        return JsonResponse(
+            {
                 "session_id": session.id,
+                "session_title": session.title,
                 "question": question,
-                "response": answer
-            })
-        except requests.RequestException as e:
-            ChatMessage.objects.create(session=session, question=question, error=str(e))
-            return JsonResponse({"error": f"LLM Service Unavailable: {str(e)}"}, status=503)
-    
-    return JsonResponse({"message": "Chat API is ready. Send a POST request with {\"question\": \"...\"}."})
+                "response": answer,
+            }
+        )
+    except requests.RequestException as exc:
+        ChatMessage.objects.create(session=session, question=question, error=str(exc))
+        return JsonResponse({"error": f"LLM Service Unavailable: {exc}"}, status=503)

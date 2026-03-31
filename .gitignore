@@ -1,6 +1,10 @@
 __pycache__/
 *.py[cod]
 *.pyo
+venv/
+.venv/
+webapp/venv/
+.codex
 
 .idea/
 

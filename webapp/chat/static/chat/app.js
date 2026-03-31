@@ -15,6 +15,11 @@
 
   let currentSessionId = null;
 
+  // Required UI elements. If they're missing, don't attempt to wire listeners.
+  if (!form || !textarea || !sendBtn || !messagesEl) {
+    return;
+  }
+
   function escapeText(s) {
     return (s || "").toString();
   }
@@ -202,6 +207,12 @@
       const cancelBtn = document.getElementById("confirmCancelBtn");
       const deleteBtn = document.getElementById("confirmDeleteBtn");
 
+      if (!cancelBtn || !deleteBtn) {
+        overlay.classList.remove("is-open");
+        resolve(false);
+        return;
+      }
+
       const cleanup = (result) => {
         overlay.classList.remove("is-open");
         cancelBtn.removeEventListener("click", onCancel);
@@ -250,20 +261,23 @@
       }
 
       if (data.session_id) {
-        currentSessionId = data.session_id;
+        currentSessionId = String(data.session_id);
       }
       placeholder.classList.remove("msg__bubble--typing");
       placeholder.textContent = data.response || "(No response)";
       upsertSessionToTop({
         id: currentSessionId,
-        title: buildSessionTitleFromQuestion(question),
+        title: data.session_title || buildSessionTitleFromQuestion(question),
         updated_at: new Date().toISOString(),
       });
       refreshSessions();
     } catch (err) {
       placeholder.classList.remove("msg__bubble--typing");
-      placeholder.parentElement.classList.remove("msg--bot");
-      placeholder.parentElement.classList.add("msg--error");
+      const wrapEl = placeholder.parentElement;
+      if (wrapEl) {
+        wrapEl.classList.remove("msg--bot");
+        wrapEl.classList.add("msg--error");
+      }
       placeholder.textContent =
         "Sorry — the LLM service is unavailable right now. Please try again in a moment.\n\n" +
         (err && err.message ? `Details: ${err.message}` : "");
@@ -294,9 +308,12 @@
     await sendQuestion(q);
   });
 
-  function resetChatUi() {
+  function resetChatUi(options = {}) {
+    const { preserveSession = false } = options;
     messagesEl.innerHTML = "";
-    currentSessionId = null;
+    if (!preserveSession) {
+      currentSessionId = null;
+    }
     addMessage("bot", INTRO_TEXT);
     textarea.value = "";
     autosize();
@@ -310,7 +327,7 @@
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) throw new Error(data.error || `Request failed (${resp.status})`);
       currentSessionId = data.session && data.session.id ? String(data.session.id) : null;
-      resetChatUi();
+      resetChatUi({ preserveSession: true });
     } catch (e) {
       resetChatUi();
       addMessage(
@@ -343,6 +360,9 @@
         if (m.answer) addMessage("bot", m.answer);
         if (m.error) addMessage("error", m.error);
       });
+      if (!data.messages || data.messages.length === 0) {
+        addMessage("bot", INTRO_TEXT);
+      }
 
     } catch (e) {
       messagesEl.innerHTML = "";

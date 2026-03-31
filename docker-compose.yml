@@ -14,16 +14,17 @@ services:
     image: ollama/ollama
     volumes:
       - ollama_data:/root/.ollama
-    ports:
-      - "11434:11434"
+    expose:
+      - "11434"
     command: ["serve"]
 
   llm-pull:
     image: ollama/ollama
     volumes:
       - ollama_data:/root/.ollama
+    network_mode: "service:llm"
     environment:
-      - OLLAMA_HOST=http://llm:11434
+      - OLLAMA_HOST=http://127.0.0.1:11434
     entrypoint: ["ollama"]
     command: ["pull", "llama3.2:1b"]
     depends_on:
