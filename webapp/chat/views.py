@@ -98,6 +98,55 @@ OUT_OF_SCOPE_MESSAGE = {
     "en": "Sorry, I can only answer questions about Acibadem University.",
 }
 
+NO_DATA_MESSAGE = {
+    "tr": (
+        "Bu konuda elimde yeterli Acıbadem Üniversitesi verisi yok. "
+        "Yalnızca veri tabanımdaki scrape edilmiş sayfalara dayanarak cevap verebiliyorum."
+    ),
+    "en": (
+        "I do not have enough Acibadem University data for this question yet. "
+        "I can answer only from the scraped pages in my database."
+    ),
+}
+
+QUESTION_STOP_WORDS = {
+    "acibadem",
+    "acıbadem",
+    "universite",
+    "üniversite",
+    "universitesi",
+    "üniversitesi",
+    "nedir",
+    "nasil",
+    "nasıl",
+    "hangi",
+    "var",
+    "mı",
+    "mi",
+    "mu",
+    "mü",
+    "what",
+    "where",
+    "when",
+    "how",
+    "is",
+    "are",
+    "the",
+    "of",
+    "for",
+    "about",
+}
+
+CATEGORY_HINTS = {
+    "departments": {"bolum", "bölüm", "bolumler", "bölümler", "department", "departments", "program", "programs"},
+    "tuition": {"ucret", "ücret", "fee", "fees", "tuition", "burs", "scholarship"},
+    "admissions": {"aday", "admission", "apply", "application", "basvuru", "başvuru", "kayit", "kayıt"},
+    "academics": {"akademik", "academic", "ders", "course", "curriculum", "egitim", "eğitim"},
+    "faculty": {"kadro", "staff", "faculty", "academician", "hoca"},
+    "news": {"duyuru", "announcement", "news", "haber", "event", "etkinlik"},
+    "campus": {"kampus", "kampüs", "campus", "ulasim", "ulaşım", "adres", "address"},
+}
+
 
 def normalize_words(text: str) -> set[str]:
     return {
@@ -214,10 +263,71 @@ def index(request: HttpRequest) -> HttpResponse:
     return render(request, "chat/index.html", {"sessions": session_items})
 
 
+def build_page_text(page: ScrapedPage, max_content_chars: int = 2500) -> str:
+    content = page.content[:max_content_chars].strip()
+    headings = page.headings.strip()
+    parts = [
+        f"URL: {page.url}",
+        f"Category: {page.category or 'general'}",
+        f"Title: {page.title or '(untitled)'}",
+    ]
+    if headings:
+        parts.append(f"Headings:\n{headings}")
+    if content:
+        parts.append(f"Content:\n{content}")
+    return "\n".join(parts)
 
-def get_scraped_page_content(url: str = "https://www.acibadem.edu.tr/") -> str:
-    page = ScrapedPage.objects.filter(url=url).order_by("-fetched_at").first()
-    return page.content if page else ""
+
+def score_page_for_question(page: ScrapedPage, question_terms: set[str]) -> int:
+    searchable_title = normalize_words(page.title)
+    searchable_headings = normalize_words(page.headings)
+    searchable_url = normalize_words(page.url.replace("/", " ").replace("-", " "))
+    searchable_content = normalize_words(page.content[:6000])
+
+    score = 0
+    score += len(question_terms & searchable_title) * 8
+    score += len(question_terms & searchable_headings) * 6
+    score += len(question_terms & searchable_url) * 5
+    score += len(question_terms & searchable_content) * 2
+
+    for category, hints in CATEGORY_HINTS.items():
+        if question_terms & hints and page.category == category:
+            score += 10
+    return score
+
+
+def find_relevant_scraped_pages(question: str, limit: int = 5) -> list[ScrapedPage]:
+    pages = list(ScrapedPage.objects.all()[:300])
+    if not pages:
+        return []
+
+    question_terms = normalize_words(question) - QUESTION_STOP_WORDS
+    if not question_terms:
+        return pages[:limit]
+
+    scored_pages = [
+        (score_page_for_question(page, question_terms), page.fetched_at, page)
+        for page in pages
+    ]
+    scored_pages.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    relevant = [page for score, _, page in scored_pages if score > 0]
+    return relevant[:limit]
+
+
+def build_scraped_context(question: str, limit: int = 5) -> str:
+    pages = find_relevant_scraped_pages(question, limit=limit)
+    if not pages:
+        return ""
+
+    context_blocks = [build_page_text(page) for page in pages]
+    joined_context = "\n\n---\n\n".join(context_blocks)
+    return (
+        "Use only the following scraped Acibadem University pages as your source.\n"
+        "Do not rely on general knowledge or make up missing details.\n"
+        "If the answer is not clearly supported by these pages, say you do not know.\n\n"
+        f"{joined_context}\n\n"
+        f"Question: {question}"
+    )
 
 @csrf_exempt
 @require_http_methods(["GET", "POST"])
@@ -277,13 +387,13 @@ def chat(request: HttpRequest) -> JsonResponse:
 
     session: Any = get_or_create_session(session_id)
     language = detect_question_language(question)
+
+    if not session.title:
+        session.title = build_session_title(question, lang=language)
+        session.save(update_fields=["title"])
+
     if not is_acibadem_related(question):
         refusal_message = OUT_OF_SCOPE_MESSAGE[language]
-
-        if not session.title:
-            session.title = build_session_title(question, lang=language)
-            session.save(update_fields=["title"])
-
         ChatMessage.objects.create(session=session, question=question, answer=refusal_message)
         return JsonResponse(
             {
@@ -294,17 +404,18 @@ def chat(request: HttpRequest) -> JsonResponse:
             }
         )
 
-    scraped_content = get_scraped_page_content()
-    if scraped_content:
-        user_content = (
-            "The following information is scraped from the Acıbadem University homepage:\n\n"
-            f"{scraped_content}\n\n"
-            "Answer the user's question using this information. "
-            "If the answer is not contained in the scraped content, say you don't know.\n\n"
-            f"Question: {question}"
+    user_content = build_scraped_context(question)
+    if not user_content:
+        no_data_message = NO_DATA_MESSAGE[language]
+        ChatMessage.objects.create(session=session, question=question, answer=no_data_message)
+        return JsonResponse(
+            {
+                "session_id": session.id,
+                "session_title": session.title,
+                "question": question,
+                "response": no_data_message,
+            }
         )
-    else:
-        user_content = question
 
     payload = {
         "model": DEFAULT_MODEL,
@@ -326,10 +437,6 @@ def chat(request: HttpRequest) -> JsonResponse:
         response = requests.post(f"{get_llm_url()}/api/chat", json=payload, timeout=60)
         response.raise_for_status()
         answer = extract_answer(response)
-
-        if not session.title:
-            session.title = build_session_title(question, lang=language)
-            session.save(update_fields=["title"])
 
         ChatMessage.objects.create(session=session, question=question, answer=answer)
         return JsonResponse(

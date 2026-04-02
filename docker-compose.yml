@@ -26,7 +26,7 @@ services:
     environment:
       - OLLAMA_HOST=http://127.0.0.1:11434
     entrypoint: ["ollama"]
-    command: ["pull", "llama3.2:1b"]
+    command: ["pull", "llama3.2:3b"]
     depends_on:
       - llm
 
@@ -50,6 +50,7 @@ services:
       - POSTGRES_PASSWORD=acu_password
       - POSTGRES_HOST=db
       - LLM_URL=http://llm:11434
+      - LLM_MODEL=llama3.2:3b
 
 volumes:
   postgres_data:

@@ -28,7 +28,9 @@ class ChatMessage(models.Model):
 
 class ScrapedPage(models.Model):
     url = models.URLField(unique=True)
+    category = models.CharField(max_length=64, blank=True)
     title = models.CharField(max_length=255, blank=True)
+    headings = models.TextField(blank=True)
     content = models.TextField()
     fetched_at = models.DateTimeField(auto_now=True)
 
