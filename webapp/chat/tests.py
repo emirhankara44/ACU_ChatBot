@@ -65,7 +65,14 @@ class ChatViewTests(TestCase):
         self.assertEqual(len(pages), 1)
         self.assertEqual(pages[0].category, "tuition")
 
-    def test_build_scraped_context_returns_empty_when_no_match_exists(self):
+    def test_build_scraped_context_returns_fallback_pages_when_no_match_exists(self):
+        ScrapedPage.objects.create(
+            url="https://www.acibadem.edu.tr/",
+            category="general",
+            title="Acibadem University",
+            headings="Acibadem University",
+            content="Main university page content.",
+        )
         ScrapedPage.objects.create(
             url="https://www.acibadem.edu.tr/haberler",
             category="news",
@@ -74,7 +81,9 @@ class ChatViewTests(TestCase):
             content="Universite haberleri burada yer alir.",
         )
 
-        self.assertEqual(build_scraped_context("Acibadem ucretleri ne kadar?"), "")
+        context = build_scraped_context("Acibadem Universitesi nerde?")
+        self.assertIn("Use only the following scraped Acibadem University pages", context)
+        self.assertIn("https://www.acibadem.edu.tr/", context)
 
     def test_sessions_post_reuses_existing_empty_session(self):
         session: ChatSession = ChatSession.objects.create(title="")

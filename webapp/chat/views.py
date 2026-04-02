@@ -144,7 +144,7 @@ CATEGORY_HINTS = {
     "academics": {"akademik", "academic", "ders", "course", "curriculum", "egitim", "eğitim"},
     "faculty": {"kadro", "staff", "faculty", "academician", "hoca"},
     "news": {"duyuru", "announcement", "news", "haber", "event", "etkinlik"},
-    "campus": {"kampus", "kampüs", "campus", "ulasim", "ulaşım", "adres", "address"},
+    "campus": {"kampus", "kampüs", "campus", "ulasim", "ulaşım", "adres", "address", "nerde", "nerede", "where", "location"},
 }
 
 
@@ -296,6 +296,25 @@ def score_page_for_question(page: ScrapedPage, question_terms: set[str]) -> int:
     return score
 
 
+def get_fallback_scraped_pages(limit: int = 5) -> list[ScrapedPage]:
+    preferred_urls = [
+        "https://www.acibadem.edu.tr/",
+        "https://www.acibadem.edu.tr/universite",
+        "https://www.acibadem.edu.tr/akademik",
+        "https://www.acibadem.edu.tr/aday/ogrenci",
+        "https://www.acibadem.edu.tr/programlar",
+    ]
+    pages_by_url = {page.url: page for page in ScrapedPage.objects.filter(url__in=preferred_urls)}
+    selected = [pages_by_url[url] for url in preferred_urls if url in pages_by_url]
+    if len(selected) >= limit:
+        return selected[:limit]
+
+    extra_pages = list(
+        ScrapedPage.objects.exclude(url__in=preferred_urls).order_by("-fetched_at")[: max(0, limit - len(selected))]
+    )
+    return selected + extra_pages
+
+
 def find_relevant_scraped_pages(question: str, limit: int = 5) -> list[ScrapedPage]:
     pages = list(ScrapedPage.objects.all()[:300])
     if not pages:
@@ -311,7 +330,9 @@ def find_relevant_scraped_pages(question: str, limit: int = 5) -> list[ScrapedPa
     ]
     scored_pages.sort(key=lambda item: (item[0], item[1]), reverse=True)
     relevant = [page for score, _, page in scored_pages if score > 0]
-    return relevant[:limit]
+    if relevant:
+        return relevant[:limit]
+    return get_fallback_scraped_pages(limit=limit)
 
 
 def build_scraped_context(question: str, limit: int = 5) -> str:
