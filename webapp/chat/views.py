@@ -15,15 +15,16 @@ DEFAULT_LLM_URL = "http://llm:11434"
 DEFAULT_LLM_TIMEOUT = int(os.environ.get("LLM_TIMEOUT", "180"))
 SYSTEM_PROMPT = (
     "You are ACU AI Chatbot for Acibadem University. "
-    "Answer only questions that are about Acibadem University. "
-    "If the question is outside that scope, refuse it briefly. "
-    "For Acibadem University questions, answer carefully and do not invent facts. "
-    "If you are unsure or the information is not available, clearly say that you do not know. "
-    "When listing departments, programs, addresses, or other factual items, only include items explicitly supported by the provided source text. "
-    "Do not infer missing list items from menus or general university knowledge. "
-    "Always reply fully in the same language as the user's question. "
-    "Do not mix Turkish and English in the same answer unless the user explicitly asks for translation "
-    "or bilingual output."
+    "You will be given SCRAPED PAGE CONTENT and a QUESTION. "
+    "RULES - follow strictly:\n"
+    "1. Answer ONLY using words and facts that appear in the provided content. "
+    "2. Do NOT use your training knowledge. Do NOT guess. Do NOT add anything not in the content. "
+    "3. For addresses/locations: copy the exact address text from the content. "
+    "4. For department lists: list EVERY department name that appears in the content, one per line. "
+    "5. For academic staff lists: list EVERY person with their EXACT title and name as written in the content. "
+    "   Copy each name and title verbatim. Do not skip anyone. Do not change titles. "
+    "6. If the answer is not in the content, say exactly: 'Bu konuda elimde bilgi yok.' (Turkish) or 'I do not have this information.' (English). "
+    "7. Reply in the same language as the question. Never mix languages."
 )
 
 TURKISH_HINT_WORDS = {
@@ -128,6 +129,19 @@ QUESTION_STOP_WORDS = {
     "mi",
     "mu",
     "mü",
+    "ve",
+    "ile",
+    "için",
+    "içinde",
+    "olan",
+    "bu",
+    "bir",
+    "da",
+    "de",
+    "fakültesi",
+    "fakülte",
+    "bölümü",
+    "bilimleri",
     "what",
     "where",
     "when",
@@ -138,6 +152,8 @@ QUESTION_STOP_WORDS = {
     "of",
     "for",
     "about",
+    "which",
+    "in",
 }
 
 CATEGORY_HINTS = {
@@ -189,13 +205,11 @@ def build_language_instruction(lang: str) -> str:
     if lang == "tr":
         return (
             "Kullanici Turkce yazdi. Cevabini tamamen Turkce ver. "
-            "Ingilizce kelime karistirma. Gerekirse bilmedigini Turkce soyle. "
-            "Adres veya bolum listesi gibi olgusal sorularda, sadece kaynak metinde acikca gecen bilgileri kullan."
+            "Ingilizce kelime karistirma. Gerekirse bilmedigini Turkce soyle."
         )
     return (
         "The user wrote in English. Reply fully in English. "
-        "Do not mix Turkish into the answer unless the user asks for it. "
-        "For factual questions like address or department lists, use only facts explicitly present in the source text."
+        "Do not mix Turkish into the answer unless the user asks for it."
     )
 
 
@@ -275,7 +289,7 @@ def index(request: HttpRequest) -> HttpResponse:
     return render(request, "chat/index.html", {"sessions": session_items})
 
 
-def build_page_text(page: ScrapedPage, max_content_chars: int = 1200) -> str:
+def build_page_text(page: ScrapedPage, max_content_chars: int = 3000) -> str:
     content = page.content[:max_content_chars].strip()
     headings = page.headings.strip()
     parts = [
@@ -286,7 +300,11 @@ def build_page_text(page: ScrapedPage, max_content_chars: int = 1200) -> str:
     if headings:
         parts.append(f"Headings:\n{headings}")
     if content:
-        parts.append(f"Content:\n{content}")
+        # Akademik kadro sayfalarında isimleri daha belirgin göster
+        if page.category == "faculty" and "akademik-kadro" in page.url:
+            parts.append(f"Academic Staff List (copy ALL entries verbatim):\n{content}")
+        else:
+            parts.append(f"Content:\n{content}")
     return "\n".join(parts)
 
 
@@ -294,17 +312,21 @@ def score_page_for_question(page: ScrapedPage, question_terms: set[str]) -> int:
     searchable_title = normalize_words(page.title)
     searchable_headings = normalize_words(page.headings)
     searchable_url = normalize_words(page.url.replace("/", " ").replace("-", " "))
-    searchable_content = normalize_words(page.content[:6000])
+    searchable_content = normalize_words(page.content)
 
     score = 0
-    score += len(question_terms & searchable_title) * 8
-    score += len(question_terms & searchable_headings) * 6
-    score += len(question_terms & searchable_url) * 5
+    score += len(question_terms & searchable_title) * 10
+    score += len(question_terms & searchable_headings) * 7
+    url_matches = len(question_terms & searchable_url)
+    score += url_matches * 6
+    # Tüm spesifik terimler URL'de varsa büyük bonus (doğru fakülte sayfası)
+    if question_terms and question_terms.issubset(searchable_url | searchable_title):
+        score += 25
     score += len(question_terms & searchable_content) * 2
 
     for category, hints in CATEGORY_HINTS.items():
         if question_terms & hints and page.category == category:
-            score += 10
+            score += 15
     return score
 
 
@@ -327,8 +349,19 @@ def get_fallback_scraped_pages(limit: int = 5) -> list[ScrapedPage]:
     return selected + extra_pages
 
 
-def find_relevant_scraped_pages(question: str, limit: int = 5) -> list[ScrapedPage]:
-    pages = list(ScrapedPage.objects.all()[:300])
+EXCLUDED_URL_PREFIXES = (
+    "https://www.acibadem.edu.tr/haberler/",
+    "https://www.acibadem.edu.tr/etkinlikler/",
+    "https://www.acibadem.edu.tr/duyurular/",
+    "https://www.acibadem.edu.tr/en/",
+)
+
+
+def find_relevant_scraped_pages(question: str, limit: int = 6) -> list[ScrapedPage]:
+    pages = [
+        p for p in ScrapedPage.objects.all()
+        if not any(p.url.startswith(prefix) for prefix in EXCLUDED_URL_PREFIXES)
+    ]
     if not pages:
         return []
 
@@ -341,13 +374,16 @@ def find_relevant_scraped_pages(question: str, limit: int = 5) -> list[ScrapedPa
         for page in pages
     ]
     scored_pages.sort(key=lambda item: (item[0], item[1]), reverse=True)
-    relevant = [page for score, _, page in scored_pages if score > 0]
-    if relevant:
-        return relevant[:limit]
-    return get_fallback_scraped_pages(limit=limit)
+    relevant = [(score, page) for score, _, page in scored_pages if score > 0]
+    if not relevant:
+        return []
+    top_score = relevant[0][0]
+    threshold = max(top_score * 0.6, 10)
+    filtered = [page for score, page in relevant if score >= threshold]
+    return filtered[:limit]
 
 
-def build_scraped_context(question: str, limit: int = 3) -> str:
+def build_scraped_context(question: str, limit: int = 6) -> str:
     pages = find_relevant_scraped_pages(question, limit=limit)
     if not pages:
         return ""
@@ -355,12 +391,11 @@ def build_scraped_context(question: str, limit: int = 3) -> str:
     context_blocks = [build_page_text(page) for page in pages]
     joined_context = "\n\n---\n\n".join(context_blocks)
     return (
-        "Use only the following scraped Acibadem University pages as your source.\n"
-        "Do not rely on general knowledge or make up missing details.\n"
-        "Ignore repeated navigation menu items unless they are directly necessary to answer the question.\n"
-        "If the answer is not clearly supported by these pages, say you do not know.\n\n"
+        "=== SCRAPED PAGE CONTENT (your ONLY source) ===\n\n"
         f"{joined_context}\n\n"
-        f"Question: {question}"
+        "=== END OF CONTENT ===\n\n"
+        "Using ONLY the content above (no outside knowledge), answer this question:\n"
+        f"{question}"
     )
 
 @csrf_exempt
@@ -451,11 +486,12 @@ def chat(request: HttpRequest) -> JsonResponse:
             }
         )
 
+
+
     payload = {
         "model": get_llm_model(),
         "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "system", "content": build_language_instruction(language)},
+            {"role": "system", "content": SYSTEM_PROMPT + " " + build_language_instruction(language)},
             {"role": "user", "content": user_content},
         ],
         "stream": False,
@@ -463,7 +499,7 @@ def chat(request: HttpRequest) -> JsonResponse:
             "temperature": 0.1,
             "top_p": 0.9,
             "repeat_penalty": 1.1,
-            "num_predict": 180,
+            "num_predict": 600,
         },
     }
 
