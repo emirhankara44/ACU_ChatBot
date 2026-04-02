@@ -10,7 +10,7 @@ from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
 from .models import ChatMessage, ChatSession, ScrapedPage
 
-DEFAULT_MODEL = os.environ.get("LLM_MODEL", "llama3.2:1b")
+DEFAULT_MODEL = os.environ.get("LLM_MODEL", "llama3.2:3b")
 DEFAULT_LLM_URL = "http://localhost:11434"
 SYSTEM_PROMPT = (
     "You are ACU AI Chatbot for Acibadem University. "

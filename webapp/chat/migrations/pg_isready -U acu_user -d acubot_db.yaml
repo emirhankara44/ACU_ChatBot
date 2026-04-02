@@ -1,0 +1,1 @@
+pg_isready -U acu_user -d acubot_db
