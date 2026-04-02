@@ -24,3 +24,16 @@ class ChatMessage(models.Model):
     def __str__(self) -> str:
         q = (self.question or "").strip()
         return q[:60] + ("…" if len(q) > 60 else "")
+
+
+class ScrapedPage(models.Model):
+    url = models.URLField(unique=True)
+    title = models.CharField(max_length=255, blank=True)
+    content = models.TextField()
+    fetched_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ["-fetched_at"]
+
+    def __str__(self) -> str:
+        return self.title or self.url

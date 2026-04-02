@@ -12,6 +12,7 @@ https://docs.djangoproject.com/en/4.2/ref/settings/
 
 from pathlib import Path
 import os
+from django.core.exceptions import ImproperlyConfigured
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -93,6 +94,11 @@ else:
             "NAME": BASE_DIR / "db.sqlite3",
         }
     }
+
+if DATABASES["default"]["ENGINE"] != "django.db.backends.postgresql":
+    raise ImproperlyConfigured(
+        "Only PostgreSQL is supported. Set DATABASES['default']['ENGINE'] to 'django.db.backends.postgresql'."
+    )
 
 
 # Password validation

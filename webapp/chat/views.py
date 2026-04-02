@@ -8,8 +8,7 @@ from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.shortcuts import render
 from django.views.decorators.csrf import csrf_exempt
 from django.views.decorators.http import require_http_methods
-
-from .models import ChatMessage, ChatSession
+from .models import ChatMessage, ChatSession, ScrapedPage
 
 DEFAULT_MODEL = os.environ.get("LLM_MODEL", "llama3.2:1b")
 DEFAULT_LLM_URL = "http://localhost:11434"
@@ -215,6 +214,11 @@ def index(request: HttpRequest) -> HttpResponse:
     return render(request, "chat/index.html", {"sessions": session_items})
 
 
+
+def get_scraped_page_content(url: str = "https://www.acibadem.edu.tr/") -> str:
+    page = ScrapedPage.objects.filter(url=url).order_by("-fetched_at").first()
+    return page.content if page else ""
+
 @csrf_exempt
 @require_http_methods(["GET", "POST"])
 def sessions(request: HttpRequest) -> JsonResponse:
@@ -290,12 +294,24 @@ def chat(request: HttpRequest) -> JsonResponse:
             }
         )
 
+    scraped_content = get_scraped_page_content()
+    if scraped_content:
+        user_content = (
+            "The following information is scraped from the Acıbadem University homepage:\n\n"
+            f"{scraped_content}\n\n"
+            "Answer the user's question using this information. "
+            "If the answer is not contained in the scraped content, say you don't know.\n\n"
+            f"Question: {question}"
+        )
+    else:
+        user_content = question
+
     payload = {
         "model": DEFAULT_MODEL,
         "messages": [
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "system", "content": build_language_instruction(language)},
-            {"role": "user", "content": question},
+            {"role": "user", "content": user_content},
         ],
         "stream": False,
         "options": {
