@@ -14,10 +14,98 @@ from .models import ChatMessage, ChatSession
 DEFAULT_MODEL = os.environ.get("LLM_MODEL", "llama3.2:1b")
 DEFAULT_LLM_URL = "http://localhost:11434"
 SYSTEM_PROMPT = (
-    "You are ACU AI Chatbot for Acibadem University. Answer clearly and helpfully. "
-    "If a question is not specifically about Acibadem University, still respond usefully, "
-    "but do not invent university-specific facts. If you are unsure, say so."
+    "You are ACU AI Chatbot for Acibadem University. "
+    "Answer only questions that are about Acibadem University. "
+    "If the question is outside that scope, refuse it briefly. "
+    "For Acibadem University questions, answer carefully and do not invent facts. "
+    "If you are unsure or the information is not available, clearly say that you do not know. "
+    "Always reply fully in the same language as the user's question. "
+    "Do not mix Turkish and English in the same answer unless the user explicitly asks for translation "
+    "or bilingual output."
 )
+
+TURKISH_HINT_WORDS = {
+    "hangi",
+    "neden",
+    "nasıl",
+    "nedir",
+    "nerede",
+    "ne",
+    "kim",
+    "kaç",
+    "var",
+    "yok",
+    "mı",
+    "mi",
+    "mu",
+    "mü",
+    "için",
+    "bölüm",
+    "bölümler",
+    "üniversite",
+    "fakülte",
+    "ders",
+    "okul",
+    "merhaba",
+}
+
+ACIBADEM_HINT_WORDS = {
+    "acibadem",
+    "acıbadem",
+    "acu",
+    "universite",
+    "üniversite",
+    "universitesi",
+    "üniversitesi",
+    "kampus",
+    "kampüs",
+    "fakulte",
+    "fakülte",
+    "bolum",
+    "bölüm",
+    "bolumler",
+    "bölümler",
+    "program",
+    "programlar",
+    "lisans",
+    "yuksek",
+    "yüksek",
+    "master",
+    "doktora",
+    "akademik",
+    "egitim",
+    "eğitim",
+    "kayit",
+    "kayıt",
+    "ucret",
+    "ücret",
+    "burs",
+    "yurt",
+    "erasmus",
+    "ogrenci",
+    "öğrenci",
+    "admission",
+    "tuition",
+    "scholarship",
+    "faculty",
+    "department",
+    "departments",
+    "programs",
+    "campus",
+}
+
+OUT_OF_SCOPE_MESSAGE = {
+    "tr": "Üzgünüm, ben sadece Acıbadem Üniversitesi hakkındaki soruları cevaplıyorum.",
+    "en": "Sorry, I can only answer questions about Acibadem University.",
+}
+
+
+def normalize_words(text: str) -> set[str]:
+    return {
+        word.strip(".,!?;:()[]{}\"'").lower()
+        for word in text.split()
+        if word.strip(".,!?;:()[]{}\"'")
+    }
 
 
 def detect_question_language(question: str) -> str:
@@ -27,7 +115,35 @@ def detect_question_language(question: str) -> str:
 
     if any(character in "çğıöşüÇĞİÖŞÜ" for character in text):
         return "tr"
+
+    normalized_words = normalize_words(text)
+    if normalized_words & TURKISH_HINT_WORDS:
+        return "tr"
     return "en"
+
+
+def is_acibadem_related(question: str) -> bool:
+    text = " ".join(question.split()).strip().lower()
+    if not text:
+        return False
+
+    normalized_words = normalize_words(text)
+    if "acibadem" in text or "acıbadem" in text or "acu" in normalized_words:
+        return True
+
+    return bool(normalized_words & ACIBADEM_HINT_WORDS)
+
+
+def build_language_instruction(lang: str) -> str:
+    if lang == "tr":
+        return (
+            "Kullanici Turkce yazdi. Cevabini tamamen Turkce ver. "
+            "Ingilizce kelime karistirma. Gerekirse bilmedigini Turkce soyle."
+        )
+    return (
+        "The user wrote in English. Reply fully in English. "
+        "Do not mix Turkish into the answer unless the user asks for it."
+    )
 
 
 def build_session_title(question: str, lang: str) -> str:
@@ -157,10 +273,28 @@ def chat(request: HttpRequest) -> JsonResponse:
 
     session: Any = get_or_create_session(session_id)
     language = detect_question_language(question)
+    if not is_acibadem_related(question):
+        refusal_message = OUT_OF_SCOPE_MESSAGE[language]
+
+        if not session.title:
+            session.title = build_session_title(question, lang=language)
+            session.save(update_fields=["title"])
+
+        ChatMessage.objects.create(session=session, question=question, answer=refusal_message)
+        return JsonResponse(
+            {
+                "session_id": session.id,
+                "session_title": session.title,
+                "question": question,
+                "response": refusal_message,
+            }
+        )
+
     payload = {
         "model": DEFAULT_MODEL,
         "messages": [
             {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "system", "content": build_language_instruction(language)},
             {"role": "user", "content": question},
         ],
         "stream": False,
