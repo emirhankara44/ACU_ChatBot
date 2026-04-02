@@ -11,13 +11,16 @@ from django.views.decorators.http import require_http_methods
 from .models import ChatMessage, ChatSession, ScrapedPage
 
 DEFAULT_MODEL = os.environ.get("LLM_MODEL", "llama3.2:3b")
-DEFAULT_LLM_URL = "http://localhost:11434"
+DEFAULT_LLM_URL = "http://llm:11434"
+DEFAULT_LLM_TIMEOUT = int(os.environ.get("LLM_TIMEOUT", "180"))
 SYSTEM_PROMPT = (
     "You are ACU AI Chatbot for Acibadem University. "
     "Answer only questions that are about Acibadem University. "
     "If the question is outside that scope, refuse it briefly. "
     "For Acibadem University questions, answer carefully and do not invent facts. "
     "If you are unsure or the information is not available, clearly say that you do not know. "
+    "When listing departments, programs, addresses, or other factual items, only include items explicitly supported by the provided source text. "
+    "Do not infer missing list items from menus or general university knowledge. "
     "Always reply fully in the same language as the user's question. "
     "Do not mix Turkish and English in the same answer unless the user explicitly asks for translation "
     "or bilingual output."
@@ -186,11 +189,13 @@ def build_language_instruction(lang: str) -> str:
     if lang == "tr":
         return (
             "Kullanici Turkce yazdi. Cevabini tamamen Turkce ver. "
-            "Ingilizce kelime karistirma. Gerekirse bilmedigini Turkce soyle."
+            "Ingilizce kelime karistirma. Gerekirse bilmedigini Turkce soyle. "
+            "Adres veya bolum listesi gibi olgusal sorularda, sadece kaynak metinde acikca gecen bilgileri kullan."
         )
     return (
         "The user wrote in English. Reply fully in English. "
-        "Do not mix Turkish into the answer unless the user asks for it."
+        "Do not mix Turkish into the answer unless the user asks for it. "
+        "For factual questions like address or department lists, use only facts explicitly present in the source text."
     )
 
 
@@ -204,7 +209,14 @@ def build_session_title(question: str, lang: str) -> str:
 
 
 def get_llm_url() -> str:
-    return os.environ.get("LLM_URL") or os.environ.get("OLLAMA_URL") or DEFAULT_LLM_URL
+    url = os.environ.get("LLM_URL") or os.environ.get("OLLAMA_URL") or DEFAULT_LLM_URL
+    if os.path.exists("/.dockerenv") and ("localhost:11434" in url or "127.0.0.1:11434" in url):
+        return "http://llm:11434"
+    return url
+
+
+def get_llm_model() -> str:
+    return os.environ.get("LLM_MODEL", DEFAULT_MODEL)
 
 
 def parse_request_data(request: HttpRequest) -> dict[str, Any]:
@@ -263,7 +275,7 @@ def index(request: HttpRequest) -> HttpResponse:
     return render(request, "chat/index.html", {"sessions": session_items})
 
 
-def build_page_text(page: ScrapedPage, max_content_chars: int = 2500) -> str:
+def build_page_text(page: ScrapedPage, max_content_chars: int = 1200) -> str:
     content = page.content[:max_content_chars].strip()
     headings = page.headings.strip()
     parts = [
@@ -335,7 +347,7 @@ def find_relevant_scraped_pages(question: str, limit: int = 5) -> list[ScrapedPa
     return get_fallback_scraped_pages(limit=limit)
 
 
-def build_scraped_context(question: str, limit: int = 5) -> str:
+def build_scraped_context(question: str, limit: int = 3) -> str:
     pages = find_relevant_scraped_pages(question, limit=limit)
     if not pages:
         return ""
@@ -345,6 +357,7 @@ def build_scraped_context(question: str, limit: int = 5) -> str:
     return (
         "Use only the following scraped Acibadem University pages as your source.\n"
         "Do not rely on general knowledge or make up missing details.\n"
+        "Ignore repeated navigation menu items unless they are directly necessary to answer the question.\n"
         "If the answer is not clearly supported by these pages, say you do not know.\n\n"
         f"{joined_context}\n\n"
         f"Question: {question}"
@@ -439,7 +452,7 @@ def chat(request: HttpRequest) -> JsonResponse:
         )
 
     payload = {
-        "model": DEFAULT_MODEL,
+        "model": get_llm_model(),
         "messages": [
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "system", "content": build_language_instruction(language)},
@@ -450,12 +463,12 @@ def chat(request: HttpRequest) -> JsonResponse:
             "temperature": 0.1,
             "top_p": 0.9,
             "repeat_penalty": 1.1,
-            "num_predict": 260,
+            "num_predict": 180,
         },
     }
 
     try:
-        response = requests.post(f"{get_llm_url()}/api/chat", json=payload, timeout=60)
+        response = requests.post(f"{get_llm_url()}/api/chat", json=payload, timeout=DEFAULT_LLM_TIMEOUT)
         response.raise_for_status()
         answer = extract_answer(response)
 
